@@ -1,5 +1,4 @@
 #include "client.h"
-#include "http_parser.h"
 #include "http.h"
 #include "server.h"
 #include "worker.h"
@@ -17,7 +16,7 @@
 #define CHECK_ALLOC(c, ptr) if(!(ptr)) { c->failed_alloc = 1; return -1;}
 
 static int
-http_client_on_url(struct http_parser *p, const char *at, size_t sz) {
+http_client_on_url(llhttp_t *p, const char *at, size_t sz) {
 
 	struct http_client *c = p->data;
 
@@ -33,7 +32,7 @@ http_client_on_url(struct http_parser *p, const char *at, size_t sz) {
  * Called when the body is parsed.
  */
 static int
-http_client_on_body(struct http_parser *p, const char *at, size_t sz) {
+http_client_on_body(llhttp_t *p, const char *at, size_t sz) {
 
 	struct http_client *c = p->data;
 	return http_client_add_to_body(c, at, sz);
@@ -51,7 +50,7 @@ http_client_add_to_body(struct http_client *c, const char *at, size_t sz) {
 }
 
 static int
-http_client_on_header_name(struct http_parser *p, const char *at, size_t sz) {
+http_client_on_header_name(llhttp_t *p, const char *at, size_t sz) {
 
 	struct http_client *c = p->data;
 	size_t n = c->header_count;
@@ -140,7 +139,7 @@ http_client_parse_query_string(struct http_client *c, const char *at, size_t sz)
 }
 
 static int
-http_client_on_header_value(struct http_parser *p, const char *at, size_t sz) {
+http_client_on_header_value(llhttp_t *p, const char *at, size_t sz) {
 
 	struct http_client *c = p->data;
 	size_t n = c->header_count;
@@ -190,7 +189,7 @@ http_client_extract_query_string(struct http_client *c) {
 }
 
 static int
-http_client_on_message_complete(struct http_parser *p) {
+http_client_on_message_complete(llhttp_t *p) {
 
 	struct http_client *c = p->data;
 
@@ -235,11 +234,9 @@ http_client_new(struct worker *w, int fd, in_addr_t addr) {
 	c->addr = addr;
 	c->s = w->s;
 
-	/* parser */
-	http_parser_init(&c->parser, HTTP_REQUEST);
-	c->parser.data = c;
 
 	/* callbacks */
+	llhttp_settings_init(&c->settings);
 	c->settings.on_url = http_client_on_url;
 	c->settings.on_body = http_client_on_body;
 	c->settings.on_message_complete = http_client_on_message_complete;
@@ -247,6 +244,10 @@ http_client_new(struct worker *w, int fd, in_addr_t addr) {
 	c->settings.on_header_value = http_client_on_header_value;
 
 	c->last_cb = LAST_CB_NONE;
+
+	/* parser */
+	llhttp_init(&c->parser, HTTP_REQUEST, &c->settings);
+	c->parser.data = c;
 
 	return c;
 }
@@ -354,10 +355,10 @@ http_client_remove_data(struct http_client *c, size_t sz) {
 	return 0;
 }
 
-int
+llhttp_errno_t
 http_client_execute(struct http_client *c) {
 
-	int nparsed = http_parser_execute(&c->parser, &c->settings, c->buffer, c->sz);
+	llhttp_errno_t perr = llhttp_execute(&c->parser, c->buffer, c->sz);
 
 	if(!c->is_websocket) {
 		/* removed consumed data, all has been copied already. */
@@ -365,7 +366,7 @@ http_client_execute(struct http_client *c) {
 		c->buffer = NULL;
 		c->sz = 0;
 	}
-	return nparsed;
+	return perr;
 }
 
 /*

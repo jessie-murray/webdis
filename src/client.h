@@ -3,7 +3,8 @@
 
 #include <event.h>
 #include <arpa/inet.h>
-#include "http_parser.h"
+#include "llhttp.h"
+#include "api.h"
 #include "websocket.h"
 
 struct http_header;
@@ -30,8 +31,8 @@ struct http_client {
 
 
 	/* HTTP parsing */
-	struct http_parser parser;
-	struct http_parser_settings settings;
+	llhttp_t parser;
+	llhttp_settings_t settings;
 	char *buffer;
 	size_t sz;
 	size_t request_sz; /* accumulated so far. */
@@ -81,7 +82,7 @@ http_client_read(struct http_client *c);
 int
 http_client_remove_data(struct http_client *c, size_t sz);
 
-int
+llhttp_errno_t
 http_client_execute(struct http_client *c);
 
 int

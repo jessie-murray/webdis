@@ -37,7 +37,8 @@ void
 worker_can_read(int fd, short event, void *p) {
 
 	struct http_client *c = p;
-	int ret, nparsed;
+	int ret;
+	llhttp_errno_t parser_ret;
 
 	(void)fd;
 	(void)event;
@@ -58,7 +59,7 @@ worker_can_read(int fd, short event, void *p) {
 		ws_add_data(c);
 	} else {
 		/* run parser */
-		nparsed = http_client_execute(c);
+		parser_ret = http_client_execute(c);
 
 		if(c->failed_alloc) {
 			slog(c->w->s, WEBDIS_DEBUG, "503", 3);
@@ -66,18 +67,16 @@ worker_can_read(int fd, short event, void *p) {
 		} else if (c->parser.flags & F_CONNECTION_CLOSE && c->fully_read) {
 			/* only close if requested *and* we've already read the request in full */
 			c->broken = 1;
-		} else if(c->is_websocket) {
-			/* we need to use the remaining (unparsed) data as the body. */
-			if(nparsed < ret) {
-				http_client_add_to_body(c, c->buffer + nparsed + 1, c->sz - nparsed - 1);
-				ws_handshake_reply(c);
-			} else {
-				c->broken = 1;
-			}
+		} else if(parser_ret == HPE_PAUSED_UPGRADE) {
+			/* parser is paused due to WebSocket upgrade. */
+			ws_handshake_reply(c); /* FIXME: use event loop to schedule */
+			llhttp_resume_after_upgrade(&c->parser);
+
+			/* 'PAUSED' comes only after a complete message => free http buffer */
 			free(c->buffer);
 			c->buffer = NULL;
 			c->sz = 0;
-		} else if(nparsed != ret) {
+		} else if(parser_ret != HPE_OK) {
 			slog(c->w->s, WEBDIS_DEBUG, "400", 3);
 			http_send_error(c, 400, "Bad Request");
 		} else if(c->request_sz > c->s->cfg->http_max_request_size) {
