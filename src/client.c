@@ -92,10 +92,9 @@ wrap_filename(const char *val, size_t val_len) {
 /*
  * Split query string into key/value pairs, process some of them.
  */
-static int
-http_client_on_query_string(struct http_parser *parser, const char *at, size_t sz) {
+static void
+http_client_parse_query_string(struct http_client *c, const char *at, size_t sz) {
 
-	struct http_client *c = parser->data;
 	const char *p = at;
 
 	while(p < at + sz) {
@@ -138,7 +137,6 @@ http_client_on_query_string(struct http_parser *parser, const char *at, size_t s
 			}
 		}
 	}
-	return 0;
 }
 
 static int
@@ -174,10 +172,30 @@ http_client_on_header_value(struct http_parser *p, const char *at, size_t sz) {
 	return 0;
 }
 
+static void
+http_client_extract_query_string(struct http_client *c) {
+	if (!c->path || !c->path_sz) return;
+
+	char *qm = memchr(c->path, '?', c->path_sz);
+	if (!qm) return;
+
+	/* adjust path length, null-terminate */
+	size_t prev_path_sz = c->path_sz;
+	c->path_sz = qm - c->path;
+	*qm = 0;
+
+	/* extract query string parameters */
+	size_t qs_sz = prev_path_sz - (qm - c->path) - 1;
+	http_client_parse_query_string(c, qm + 1, qs_sz);
+}
+
 static int
 http_client_on_message_complete(struct http_parser *p) {
 
 	struct http_client *c = p->data;
+
+	/* extract query string parameters if needed */
+	http_client_extract_query_string(c);
 
 	/* keep-alive detection */
 	if (c->parser.flags & F_CONNECTION_CLOSE) {
@@ -223,7 +241,6 @@ http_client_new(struct worker *w, int fd, in_addr_t addr) {
 
 	/* callbacks */
 	c->settings.on_url = http_client_on_url;
-	c->settings.on_query_string = http_client_on_query_string;
 	c->settings.on_body = http_client_on_body;
 	c->settings.on_message_complete = http_client_on_message_complete;
 	c->settings.on_header_field = http_client_on_header_name;
